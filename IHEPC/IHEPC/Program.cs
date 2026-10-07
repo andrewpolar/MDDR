@@ -106,7 +106,7 @@ namespace IHEPC
 
             //ensemble settings 
             const int nIntermediate = 8;
-            const int nPoints0Ensemble = 5;
+            const int nPoints0Ensemble = 24;
             const int nPoints1Ensemble = 16;
             const int nEpochsInSpit = 3;
             const int nTreeDepth = 8;
