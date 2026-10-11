@@ -1,4 +1,5 @@
-﻿using System;
+using IHEPC;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -18,7 +19,7 @@ namespace IHEPC
             Indices = indices ?? throw new ArgumentNullException(nameof(indices));
         }
 
-        public (Splitter Above, Splitter BelowOrEqual) Split(bool useUnitVector, int layer)
+        public (Splitter Above, Splitter BelowOrEqual) Split(int mode, int layer)
         {
             if (Indices.Count <= 1)
                 throw new InvalidOperationException(
@@ -26,9 +27,10 @@ namespace IHEPC
 
             int vectorSize = Items[Indices[0]].Length;
 
-            double[] unitVector = useUnitVector
-                ? GenerateNormalUnitVector(vectorSize, layer)
-                : GenerateRandomUnitVector(vectorSize);
+            double[] unitVector = new double[vectorSize];
+            if (0 == mode) unitVector = GenerateNormalUnitVector(vectorSize, layer);
+            else if (1 == mode) unitVector = GenerateRandomUnitVector(vectorSize);
+            else unitVector = GeneratePrincipalDirectionUnitVector(Items, Indices);
 
             var innerProducts = new List<(int Index, double Value)>(Indices.Count);
             foreach (int index in Indices)
@@ -100,6 +102,149 @@ namespace IHEPC
             var vector = new double[vectorSize];
             vector[layer % vectorSize] = 1;
             return vector;
+        }
+
+        public static double[] GeneratePrincipalDirectionUnitVector(
+            IReadOnlyList<double[]> Items,
+            IReadOnlyList<int> Indices)
+        {
+            if (Items == null || Indices == null)
+                throw new ArgumentNullException();
+
+            if (Indices.Count < 2)
+                throw new ArgumentException(
+                    "At least two vectors are required.");
+
+            int dimension = Items[Indices[0]].Length;
+
+            if (dimension == 0)
+                throw new ArgumentException("Vectors cannot be empty.");
+
+            // Calculate the mean vector of the selected observations.
+            double[] mean = new double[dimension];
+
+            foreach (int index in Indices)
+            {
+                double[] x = Items[index];
+
+                if (x.Length != dimension)
+                    throw new ArgumentException(
+                        "All vectors must have the same dimension.");
+
+                for (int j = 0; j < dimension; j++)
+                    mean[j] += x[j];
+            }
+
+            for (int j = 0; j < dimension; j++)
+                mean[j] /= Indices.Count;
+
+            // Calculate the covariance matrix.
+            double[,] cov = new double[dimension, dimension];
+
+            foreach (int index in Indices)
+            {
+                double[] x = Items[index];
+
+                for (int i = 0; i < dimension; i++)
+                {
+                    double di = x[i] - mean[i];
+
+                    for (int j = i; j < dimension; j++)
+                        cov[i, j] += di * (x[j] - mean[j]);
+                }
+            }
+
+            double denominator = Indices.Count - 1;
+
+            for (int i = 0; i < dimension; i++)
+            {
+                for (int j = i; j < dimension; j++)
+                {
+                    cov[i, j] /= denominator;
+                    cov[j, i] = cov[i, j];
+                }
+            }
+
+            // Find the dominant eigenvector using power iteration.
+            // Start with a non-axis-aligned vector.
+            double[] v = new double[dimension];
+
+            for (int i = 0; i < dimension; i++)
+                v[i] = 1.0 / Math.Sqrt(dimension);
+
+            // A small deterministic perturbation helps avoid an
+            // unfortunate initial vector orthogonal to the dominant
+            // eigenvector.
+            for (int i = 0; i < dimension; i++)
+                v[i] += (i + 1.0) * 1e-4;
+
+            Normalize(v);
+
+            double[] next = new double[dimension];
+
+            for (int iteration = 0; iteration < 100; iteration++)
+            {
+                Array.Clear(next, 0, dimension);
+
+                for (int i = 0; i < dimension; i++)
+                    for (int j = 0; j < dimension; j++)
+                        next[i] += cov[i, j] * v[j];
+
+                double norm = 0.0;
+
+                for (int i = 0; i < dimension; i++)
+                    norm += next[i] * next[i];
+
+                norm = Math.Sqrt(norm);
+
+                // Zero covariance: no preferred direction exists.
+                if (norm < 1e-15)
+                {
+                    for (int i = 0; i < dimension; i++)
+                        v[i] = (i == 0) ? 1.0 : 0.0;
+
+                    return v;
+                }
+
+                for (int i = 0; i < dimension; i++)
+                    next[i] /= norm;
+
+                // Eigenvectors can differ by sign. Compare directions
+                // without treating v and -v as different.
+                double alignment = 0.0;
+
+                for (int i = 0; i < dimension; i++)
+                    alignment += next[i] * v[i];
+
+                if (alignment < 0.0)
+                {
+                    for (int i = 0; i < dimension; i++)
+                        next[i] = -next[i];
+
+                    alignment = -alignment;
+                }
+
+                Array.Copy(next, v, dimension);
+
+                if (1.0 - alignment < 1e-12)
+                    break;
+            }
+
+            return v;
+        }
+
+        private static void Normalize(double[] v)
+        {
+            double norm = 0.0;
+
+            for (int i = 0; i < v.Length; i++)
+                norm += v[i] * v[i];
+
+            norm = Math.Sqrt(norm);
+
+            if (norm > 0.0)
+                for (int i = 0; i < v.Length; i++)
+                    v[i] /= norm;
         }
 
         private static double ComputeInnerProduct(double[] vecA, double[] vecB)
@@ -182,7 +327,7 @@ namespace IHEPC
                     nameof(epochsPerLayer));
         }
 
-        public KANEnsemble Build(KAN rootModel, List<int> rootIndices, int numberOfSplittingLayers, bool useUnitVector = false)
+        public KANEnsemble Build(KAN rootModel, List<int> rootIndices, int numberOfSplittingLayers, int mode)
         {
             if (rootModel == null)
                 throw new ArgumentNullException(nameof(rootModel));
@@ -212,7 +357,7 @@ namespace IHEPC
                             .ToList();
 
                     Splitter splitter = new Splitter(residuals, localIndices);
-                    (Splitter above, Splitter below) = splitter.Split(useUnitVector, layer);
+                    (Splitter above, Splitter below) = splitter.Split(mode, layer);
 
                     List<int> aboveGlobalIndices = above.Indices
                             .Select(local => parent.Indices[local])
@@ -282,3 +427,4 @@ namespace IHEPC
         }
     }
 }
+﻿
