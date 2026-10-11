@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // KANKAN (Kolmogorov-Arnold Networks KAczmarz-Newton)
 // MDDR (Multivariate Divisive Data Resorting)
 //
@@ -106,7 +106,7 @@ namespace IHEPC
 
             //ensemble settings 
             const int nIntermediate = 8;
-            const int nPoints0Ensemble = 24;
+            const int nPoints0Ensemble = 4;
             const int nPoints1Ensemble = 16;
             const int nEpochsInSpit = 3;
             const int nTreeDepth = 8;
@@ -158,7 +158,7 @@ namespace IHEPC
             KAN rootKan = new KAN(MDDRnetwork, MDDRpoints, Min, Max, Min, Max, Min, Max, alpha, new Random());
             List<int> indices = Enumerable.Range(0, N).ToList();
             EnsembleBuilder builder = new EnsembleBuilder(hiddenList, targetList, nEpochsInSpit);
-            KANEnsemble ensemble = builder.Build(rootKan, indices, nTreeDepth);
+            KANEnsemble ensemble = builder.Build(rootKan, indices, nTreeDepth, 1);
 
             //calibration
             Console.WriteLine("Calibration...");
